@@ -92,3 +92,29 @@ Before publishing, replace `OWNER` URLs and `REPLACE_WITH_PUBLISHER_ID` in `pypr
 - Textureless backgrounds may not contain enough features for a reliable match.
 - Confidence is a heuristic quality score, not a calibrated probability.
 - The browser currently stages a selected image for the native Mask Editor rather than opening the editor directly because native editor integration is owned by the Load Image UI contract.
+
+## Version lifecycle
+
+A **candidate** is one image saved by a queue run. **Accept A as Current Version** selects candidate A as the working result of the current step; you can keep refining the same step and replace Current later. **Accept A & Send to Next Step…** accepts A if needed, creates or updates the named destination step, records its `input_ref`, moves the same **IIT Load Version** node to that step, and sets its source to `promoted_input`.
+
+`promoted_input` restores the image, mask, positive prompt, negative prompt, and seed sent from the previous step. Current acceptance and promotion are idempotent for the same candidate, so promotion does not create a duplicate accepted version.
+
+## Version Browser
+
+1. Generate candidates with **IIT Save Candidate Run**.
+2. Open **IIT Load Version → Open Version Browser**.
+3. Use **A/B slider** to compare named A and B images, or choose a 2, 3, or 4 image grid with independent A/B/C/D selectors.
+4. All actions apply to A. Clicking B, C, or D swaps that image into A.
+5. Use **Accept A as Current Version** to continue working in the same step, or **Accept A & Send to Next Step…** to enter the next step with `source=promoted_input`.
+
+The browser keeps its controls and footer outside the zoomable image stage. Candidate labels show `CURRENT`, `PROMOTED`, and `ACTION TARGET` where applicable.
+
+## IIT View Trajectory
+
+Connect `IIT_META` from **IIT Load Version**, then click **Open Trajectory**. The horizontal timeline displays the initial image, each selected/promoted step, and the latest current version. A current version that has not been promoted is highlighted in red as **CURRENT · NOT PROMOTED**.
+
+The node outputs the same trajectory as JSON. `show_metadata` controls seed/prompt summaries, and `thumbnail_size` controls card image size.
+
+## IIT Add Step / Seed Label
+
+Connect an `IMAGE`, `IIT_META`, and the `seed` output from **IIT Load Version**. The node draws `{step_name}/{seed}` at the top-left of every image using white text on a dark high-contrast background, then returns the labelled `IMAGE` batch.

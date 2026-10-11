@@ -6,6 +6,7 @@ from server import PromptServer
 
 from .storage import (
     accept_candidate,
+    build_trajectory,
     candidate_path,
     copy_to_input,
     find_candidate,
@@ -35,6 +36,31 @@ async def get_manifest(request):
         return web.json_response(load_manifest(project))
     except Exception as exc:
         return error_response(exc, 404 if isinstance(exc, FileNotFoundError) else 400)
+
+
+@routes.get("/iit/trajectory")
+async def get_trajectory(request):
+    try:
+        _, project = context(request.query.get("storage_root", ""), request.query["project_name"])
+        return web.json_response(build_trajectory(load_manifest(project)))
+    except Exception as exc:
+        return error_response(exc, 404 if isinstance(exc, FileNotFoundError) else 400)
+
+
+@routes.get("/iit/initial-image")
+async def get_initial_image(request):
+    try:
+        _, project = context(request.query.get("storage_root", ""), request.query["project_name"])
+        manifest = load_manifest(project)
+        image_name = (manifest.get("initial_input") or {}).get("image")
+        if not image_name:
+            raise FileNotFoundError("Initial image is not recorded for this project")
+        path = folder_paths.get_annotated_filepath(image_name)
+        if not path:
+            raise FileNotFoundError(f"Initial image not found: {image_name}")
+        return web.FileResponse(path)
+    except Exception as exc:
+        return error_response(exc, 404)
 
 
 @routes.get("/iit/image")

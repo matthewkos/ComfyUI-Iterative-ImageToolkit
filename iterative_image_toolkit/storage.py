@@ -130,12 +130,15 @@ def register_run(
     step_name: str,
     image_name: str,
     candidates: list[dict[str, Any]],
+    initial_input: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     root_path = Path(root).resolve()
     project = project_dir(root_path, project_name)
     project.mkdir(parents=True, exist_ok=True)
     with _LOCK:
         manifest = load_manifest(project, create=True, project_name=project_name)
+        if initial_input and not manifest.get("initial_input"):
+            manifest["initial_input"] = initial_input
         key, step = ensure_step(manifest, step_idx, step_name)
         run_no = next_number(step["runs"], "run_id")
         run_id = f"run-{run_no:04d}"
@@ -182,6 +185,22 @@ def resolve_selection(step: dict[str, Any], selection: str, candidate_id: str = 
     return str(version["accepted_candidate_id"])
 
 
+def find_version(step: dict[str, Any], version_id: str) -> dict[str, Any]:
+    version = next((item for item in step.get("versions", []) if item.get("version_id") == version_id), None)
+    if not version:
+        raise KeyError(f"Version not found: {version_id}")
+    return version
+
+
+def resolve_promoted_selection(manifest: dict[str, Any], step: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    ref = step.get("input_ref")
+    if not ref:
+        raise ValueError("This step has no promoted input")
+    source_step = find_step(manifest, str(ref["step_key"]))
+    candidate = find_candidate(manifest, source_step, str(ref["candidate_id"]))
+    return source_step, candidate
+
+
 def accept_candidate(
     root: str | Path,
     project_name: str,
@@ -196,30 +215,98 @@ def accept_candidate(
         manifest = load_manifest(project)
         step = find_step(manifest, step_key_value)
         find_candidate(manifest, step, candidate_id)
-        version_no = next_number(step.get("versions", []), "version_id")
-        version_id = f"ver-{version_no:02d}"
-        version = {
-            "version_id": version_id,
-            "accepted_candidate_id": candidate_id,
-            "accepted_at": utc_now(),
-        }
-        step.setdefault("versions", []).append(version)
-        step["current_version_id"] = version_id
+        current_id = step.get("current_version_id")
+        current = find_version(step, current_id) if current_id else None
+        if current and current.get("accepted_candidate_id") == candidate_id:
+            version = current
+            version_id = str(current_id)
+        else:
+            version_no = next_number(step.get("versions", []), "version_id")
+            version_id = f"ver-{version_no:02d}"
+            version = {
+                "version_id": version_id,
+                "accepted_candidate_id": candidate_id,
+                "accepted_at": utc_now(),
+            }
+            step.setdefault("versions", []).append(version)
+            step["current_version_id"] = version_id
+        result = {"version_id": version_id, "manifest": manifest}
         if action == "promote":
             if target_step_idx is None:
                 target_step_idx = int(step["step_idx"]) + 1
-            target_name = target_step_name or f"step-{target_step_idx}"
+            target_name = target_step_name.strip() or f"step-{target_step_idx}"
             target_key, target = ensure_step(manifest, target_step_idx, target_name)
             target["input_ref"] = {
                 "step_key": step_key_value,
                 "version_id": version_id,
                 "candidate_id": candidate_id,
+                "promoted_at": utc_now(),
             }
             version["promoted_to_step_key"] = target_key
+            result["target_step"] = {
+                "step_idx": int(target["step_idx"]),
+                "step_name": str(target["step_name"]),
+                "step_key": target_key,
+            }
         elif action != "set_current":
             raise ValueError(f"Unknown action: {action}")
         save_manifest(project, manifest)
-    return {"version_id": version_id, "manifest": manifest}
+    return result
+
+
+def build_trajectory(manifest: dict[str, Any]) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
+    initial = manifest.get("initial_input")
+    if initial:
+        entries.append({"kind": "initial", "status": "initial", **initial})
+    else:
+        entries.append({"kind": "initial", "status": "missing", "image": None})
+    steps = sorted(
+        manifest.get("steps", {}).items(),
+        key=lambda item: (int(item[1].get("step_idx", 0)), item[0]),
+    )
+    referenced_versions: dict[str, tuple[str, str]] = {}
+    for destination_key, destination in steps:
+        ref = destination.get("input_ref") or {}
+        if ref.get("step_key") and ref.get("version_id"):
+            referenced_versions[str(ref["step_key"])] = (
+                str(ref["version_id"]),
+                destination_key,
+            )
+    for key, step in steps:
+        referenced = referenced_versions.get(key)
+        if referenced:
+            version_id, promoted_to = referenced
+            status = "promoted"
+        else:
+            version_id = step.get("current_version_id")
+            promoted_to = None
+            status = "pending"
+        if not version_id:
+            continue
+        version = find_version(step, str(version_id))
+        candidate = find_candidate(manifest, step, str(version["accepted_candidate_id"]))
+        entries.append(
+            {
+                "kind": "version",
+                "status": status,
+                "step_key": key,
+                "step_idx": int(step.get("step_idx", 0)),
+                "step_name": str(step.get("step_name", "")),
+                "version_id": str(version_id),
+                "candidate_id": str(version["accepted_candidate_id"]),
+                "run_id": str(candidate.get("candidate_id", "")).split("-candidate-")[0],
+                "seed": candidate.get("seed"),
+                "positive_prompt": candidate.get("positive_prompt") or "",
+                "negative_prompt": candidate.get("negative_prompt") or "",
+                "accepted_at": version.get("accepted_at"),
+                "promoted_to_step_key": promoted_to,
+            }
+        )
+    return {
+        "project_name": manifest.get("project_name", ""),
+        "entries": entries,
+    }
 
 
 def candidate_path(project: str | Path, candidate: dict[str, Any]) -> Path:

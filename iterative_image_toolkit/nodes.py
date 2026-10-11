@@ -14,12 +14,14 @@ from PIL import Image
 from .matching import diagnostics_json, locate_crop
 from .storage import (
     atomic_write_json,
+    build_trajectory,
     candidate_path,
     find_candidate,
     find_step,
     load_manifest,
     project_dir,
     register_run,
+    resolve_promoted_selection,
     resolve_selection,
     resolve_storage_root,
     slug,
@@ -205,7 +207,23 @@ class IITSaveCandidates:
         )
         root = resolve_storage_root(storage_root, folder_paths.get_output_directory())
         project = project_dir(root, project_name)
-        manifest, key, run_id = register_run(root, project_name, step_idx, step_name, image_name, [])
+        initial_input = None
+        if iit_meta and iit_meta.get("source") == IITLoadVersion.SOURCE_INITIAL:
+            initial_input = {
+                "image": iit_meta.get("source_image"),
+                "positive_prompt": positive_prompt or "",
+                "negative_prompt": negative_prompt or "",
+                "seed": int(seed) if seed is not None else -1,
+            }
+        manifest, key, run_id = register_run(
+            root,
+            project_name,
+            step_idx,
+            step_name,
+            image_name,
+            [],
+            initial_input=initial_input,
+        )
         if key != expected_key:
             raise RuntimeError(f"Resolved step key changed unexpectedly: {key} != {expected_key}")
         step = find_step(manifest, key)
@@ -260,6 +278,7 @@ class IITLoadVersion:
     SOURCE_INITIAL = "initial_image"
     SOURCE_CURRENT = "current_version"
     SOURCE_CANDIDATE = "candidate"
+    SOURCE_PROMOTED = "promoted_input"
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -292,9 +311,9 @@ class IITLoadVersion:
                     {"default": "edit", "tooltip": "Human-readable step name. Combined with step_idx to form step_key and emitted in IIT_META."},
                 ),
                 "source": (
-                    [cls.SOURCE_INITIAL, cls.SOURCE_CURRENT, cls.SOURCE_CANDIDATE],
+                    [cls.SOURCE_INITIAL, cls.SOURCE_CURRENT, cls.SOURCE_CANDIDATE, cls.SOURCE_PROMOTED],
                     {
-                        "tooltip": "Selects one coherent source for image, mask, prompts and seed. Initial uses this node's image/manual fields; current_version restores the accepted candidate; candidate restores candidate_id."
+                        "tooltip": "Selects one coherent source for image, mask, prompts and seed. initial_image uses this node's image/manual fields; current_version restores this step's accepted candidate; candidate restores candidate_id; promoted_input restores the version sent from the previous step."
                     },
                 ),
                 "candidate_id": (
@@ -329,13 +348,13 @@ class IITLoadVersion:
         "Manual negative prompt in initial mode, otherwise the restored candidate prompt.",
         "Manual seed in initial mode, otherwise the restored candidate seed or -1.",
         "Formatted JSON describing the resolved image/metadata source.",
-        "Project context for IIT Save Candidate Run: schema_version, project_name, step_idx, step_name, step_key and storage_root.",
+        "Project context for IIT Save Candidate Run and IIT View Trajectory, including source lineage and storage settings.",
     )
     FUNCTION = "load"
     CATEGORY = CATEGORY
     DESCRIPTION = (
         "Replaces Load Image for an iterative project step. Begin by uploading/selecting an initial image and entering optional multiline prompts and a seed. "
-        "Later switch source to the current accepted version or a candidate to restore its image, mask, prompts and seed together. IIT_META carries the same project/step to IIT Save Candidate Run."
+        "Later switch source to the current accepted version, a candidate, or promoted_input to restore the image, mask, prompts and seed together. IIT_META carries the same project/step to saving and trajectory nodes."
     )
 
     @staticmethod
@@ -357,6 +376,7 @@ class IITLoadVersion:
         meta = self._meta(project_name, step_idx, step_name, storage_root)
         if source == self.SOURCE_INITIAL:
             loaded_image, loaded_mask = load_image_and_mask(self._initial_image_path(image))
+            meta.update({"source": source, "source_image": image})
             metadata = {
                 "source": source,
                 "image": image,
@@ -366,21 +386,28 @@ class IITLoadVersion:
                 **meta,
             }
             return loaded_image, loaded_mask, positive_prompt or "", negative_prompt or "", int(seed), json.dumps(metadata, ensure_ascii=False, indent=2), meta
-        if source not in {self.SOURCE_CURRENT, self.SOURCE_CANDIDATE}:
+        if source not in {self.SOURCE_CURRENT, self.SOURCE_CANDIDATE, self.SOURCE_PROMOTED}:
             raise ValueError(f"Unknown source: {source}")
         root = resolve_storage_root(storage_root, folder_paths.get_output_directory())
         project = project_dir(root, project_name)
         manifest = load_manifest(project)
         step = find_step(manifest, meta["step_key"])
-        resolved_id = resolve_selection(step, "current" if source == self.SOURCE_CURRENT else "candidate", candidate_id)
-        candidate = find_candidate(manifest, step, resolved_id)
+        if source == self.SOURCE_PROMOTED:
+            source_step, candidate = resolve_promoted_selection(manifest, step)
+            resolved_id = str(candidate["candidate_id"])
+            resolved_from_step = make_step_key(source_step["step_idx"], source_step["step_name"])
+        else:
+            resolved_id = resolve_selection(step, "current" if source == self.SOURCE_CURRENT else "candidate", candidate_id)
+            candidate = find_candidate(manifest, step, resolved_id)
+            resolved_from_step = meta["step_key"]
         loaded_image, loaded_mask = load_image_and_mask(candidate_path(project, candidate))
         mask_path = candidate.get("input_mask_path")
         if mask_path and (project / mask_path).exists():
             mask_array = np.asarray(Image.open(project / mask_path).convert("L"), dtype=np.float32) / 255.0
             loaded_mask = torch.from_numpy(mask_array).unsqueeze(0)
+        meta.update({"source": source, "source_candidate_id": resolved_id, "resolved_from_step": resolved_from_step})
         metadata = dict(candidate)
-        metadata.update({"source": source, **meta})
+        metadata.update(meta)
         return (
             loaded_image,
             loaded_mask,
@@ -414,9 +441,93 @@ class IITLoadVersion:
             return True
         if source == cls.SOURCE_CANDIDATE and not candidate_id.strip():
             return "candidate_id is required when source is 'candidate'"
-        if source not in {cls.SOURCE_CURRENT, cls.SOURCE_CANDIDATE}:
+        if source not in {cls.SOURCE_CURRENT, cls.SOURCE_CANDIDATE, cls.SOURCE_PROMOTED}:
             return f"Unknown source: {source}"
         return True
+
+
+class IITAddStepSeedLabel:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {"tooltip": "Image batch on which the step/seed label will be drawn."}),
+                "iit_meta": ("IIT_META", {"tooltip": "Project context from IIT Load Version. Its step_name is shown before the slash."}),
+                "seed": ("INT", {"forceInput": True, "tooltip": "Seed shown after the slash. Connect IIT Load Version's seed output."}),
+                "font_size": ("INT", {"default": 36, "min": 8, "max": 512, "tooltip": "Label font size in pixels."}),
+                "padding": ("INT", {"default": 12, "min": 0, "max": 256, "tooltip": "Distance from the top-left image edges."}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    OUTPUT_TOOLTIPS = ("Input image batch with a {step_name}/{seed} label drawn at the top-left.",)
+    FUNCTION = "draw"
+    CATEGORY = CATEGORY
+    DESCRIPTION = "Draws {step_name}/{seed} at the top of every image with a high-contrast background."
+
+    @staticmethod
+    def _font(size):
+        from PIL import ImageFont
+        for candidate in ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "C:/Windows/Fonts/arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf"):
+            try:
+                return ImageFont.truetype(candidate, size=size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    def draw(self, images, iit_meta, seed, font_size=36, padding=12):
+        from PIL import ImageDraw
+        if not isinstance(iit_meta, dict) or "step_name" not in iit_meta:
+            raise ValueError("iit_meta must contain step_name")
+        label = f"{iit_meta['step_name']}/{int(seed)}"
+        arrays = tensor_to_rgb(images)
+        if arrays.ndim == 3:
+            arrays = arrays[None, ...]
+        font = self._font(int(font_size))
+        rendered = []
+        for array in arrays:
+            image = Image.fromarray(array, mode="RGB")
+            draw = ImageDraw.Draw(image)
+            left, top = int(padding), int(padding)
+            box = draw.textbbox((left, top), label, font=font, stroke_width=1)
+            margin = max(4, int(font_size) // 6)
+            draw.rounded_rectangle((box[0]-margin, box[1]-margin, box[2]+margin, box[3]+margin), radius=max(2, margin//2), fill=(0,0,0))
+            draw.text((left, top), label, font=font, fill=(255,255,255), stroke_width=1, stroke_fill=(0,0,0))
+            rendered.append(np.asarray(image, dtype=np.uint8))
+        return (torch.from_numpy(np.stack(rendered).astype(np.float32) / 255.0),)
+
+
+class IITViewTrajectory:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "project_name": ("STRING", {"default": "my-project", "tooltip": "Fallback project used when iit_meta is not connected."}),
+                "storage_root": ("STRING", {"default": "", "tooltip": "Fallback storage root. Blank uses the IIT output folder."}),
+                "show_metadata": ("BOOLEAN", {"default": True, "tooltip": "Show seed and prompt summaries on trajectory cards."}),
+                "thumbnail_size": ("INT", {"default": 220, "min": 96, "max": 512, "step": 8, "tooltip": "Trajectory thumbnail width in pixels."}),
+            },
+            "optional": {"iit_meta": ("IIT_META", {"tooltip": "Project context from IIT Load Version; overrides project widgets."})},
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("trajectory_json",)
+    OUTPUT_TOOLTIPS = ("JSON containing the initial image, promoted versions, and current version pending promotion.",)
+    FUNCTION = "view"
+    CATEGORY = CATEGORY
+    OUTPUT_NODE = True
+    DESCRIPTION = "Builds the selected image trajectory. Current versions not yet promoted are marked pending and shown in red by the browser."
+
+    def view(self, project_name, storage_root="", show_metadata=True, thumbnail_size=220, iit_meta=None):
+        if iit_meta is not None:
+            if not isinstance(iit_meta, dict) or "project_name" not in iit_meta or "storage_root" not in iit_meta:
+                raise ValueError("iit_meta must contain project_name and storage_root")
+            project_name = str(iit_meta["project_name"])
+            storage_root = str(iit_meta.get("storage_root") or "")
+        root = resolve_storage_root(storage_root, folder_paths.get_output_directory())
+        manifest = load_manifest(project_dir(root, project_name))
+        return (json.dumps(build_trajectory(manifest), ensure_ascii=False, indent=2),)
 
 
 class IITLocateEditedCrop:
@@ -529,10 +640,14 @@ NODE_CLASS_MAPPINGS = {
     "IITSaveCandidates": IITSaveCandidates,
     "IITLoadVersion": IITLoadVersion,
     "IITLocateEditedCrop": IITLocateEditedCrop,
+    "IITAddStepSeedLabel": IITAddStepSeedLabel,
+    "IITViewTrajectory": IITViewTrajectory,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "IITSaveCandidates": "IIT Save Candidate Run",
     "IITLoadVersion": "IIT Load Version",
     "IITLocateEditedCrop": "IIT Locate Edited Crop",
+    "IITAddStepSeedLabel": "IIT Add Step / Seed Label",
+    "IITViewTrajectory": "IIT View Trajectory",
 }

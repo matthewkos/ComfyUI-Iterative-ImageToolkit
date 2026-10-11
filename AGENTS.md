@@ -93,3 +93,12 @@ Every bug fix needs a regression test. New features need focused unit tests and,
 ## Definition of done
 
 A contribution is complete only when implementation matches documented behavior, tests and lint pass, docs are current, candidate data is preserved, manifest compatibility is considered, and Registry packaging excludes development-only or large assets.
+
+## Version-state and browser UI rules
+
+- Use these exact lifecycle terms: `candidate`, `current_version`, and `promoted_input`.
+- `current_version` means accepted for the present step but not necessarily promoted. Do not call it staged; staging is reserved for Mask Editor handoff.
+- Promote must accept A idempotently, create/update the destination step `input_ref`, move the invoking IIT Load Version to that destination step, and set its source to `promoted_input`.
+- Version Browser actions always apply to A. Clicking B/C/D must swap that image into A before an action runs.
+- A/B comparison views must visibly name A and B. Browser controls and actions must never be covered by zoomed or panned images.
+- Trajectory views show the selected path only: initial image, promoted current versions, and the last current version. Mark a current version that is not promoted in red as `CURRENT · NOT PROMOTED`.
