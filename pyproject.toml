@@ -1,0 +1,33 @@
+[project]
+name = "comfyui-iterative-image-toolkit"
+version = "0.1.0"
+description = "A ComfyUI node pack for iterative image editing, project-based versioning, visual comparison, mask editing, and robust crop alignment."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "opencv-python-headless>=4.8",
+  "Pillow>=10.0",
+]
+
+[project.urls]
+Repository = "https://github.com/matthewkos/ComfyUI-Iterative-ImageToolkit"
+Documentation = "https://github.com/matthewkos/ComfyUI-Iterative-ImageToolkit#readme"
+Issues = "https://github.com/matthewkos/ComfyUI-Iterative-ImageToolkit/issues"
+
+[tool.comfy]
+PublisherId = "REPLACE_WITH_PUBLISHER_ID"
+DisplayName = "Iterative Image Toolkit"
+Icon = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
