@@ -68,6 +68,10 @@ python -m pip install -r requirements.txt
 
 Restart ComfyUI and find the nodes under **Iterative Image Toolkit**.
 
+## Example workflow
+
+Load [`example_workflows/iit_bilinear_scale.json`](example_workflows/iit_bilinear_scale.json) in ComfyUI. It demonstrates **IIT Load Version → Upscale Image By (bilinear, 2×) → IIT Save Candidate Run**, with mask, positive prompt, negative prompt, seed, and `IIT_META` connected correctly. `IIT_META` also feeds **IIT View Trajectory**. Select or upload a real image before queueing because `example.png` is a placeholder.
+
 ## Mask Editor workflow
 
 IIT Load Version uses the same `image` upload/selection contract as Load Image, so initial images can use ComfyUI native Mask Editor directly. For a saved candidate, select it in the Version Browser and click **Stage for Mask Editor**; the staged input is selected on the same IIT Load Version node.
@@ -85,6 +89,18 @@ Read [`AGENTS.md`](AGENTS.md) before contributing.
 ## Registry publishing
 
 Before publishing, replace `OWNER` URLs and `REPLACE_WITH_PUBLISHER_ID` in `pyproject.toml`. The intended Registry package ID is `iterative-image-toolkit` and display name is **Iterative Image Toolkit**.
+
+## Example workflow
+
+Load `example_workflows/iit_scale_1mp_text_save.json` in ComfyUI. It uses only IIT nodes plus the current ComfyUI core **Scale Image to Total Pixels** and **Draw Text Overlay** nodes:
+
+1. **IIT Load Version** provides the initial or restored image and project metadata.
+2. **Scale Image to Total Pixels** resizes it to 1.0 MP with bilinear interpolation.
+3. **Draw Text Overlay** adds the fixed example label `01-edit/123456789` at the top-left. Replace that text manually when using another step or seed.
+4. **IIT Save Candidate Run** saves the labelled result while preserving the Loader's mask, prompts, seed, and `IIT_META`.
+5. **IIT View Trajectory** receives the same `IIT_META` for viewing project lineage.
+
+The workflow intentionally does not add an IIT text-label node. The example label is fixed because **Draw Text Overlay** accepts a text string but does not format `IIT_META` and seed sockets by itself.
 
 ## Limitations
 
@@ -115,6 +131,6 @@ Connect `IIT_META` from **IIT Load Version**, then click **Open Trajectory**. Th
 
 The node outputs the same trajectory as JSON. `show_metadata` controls seed/prompt summaries, and `thumbnail_size` controls card image size.
 
-## IIT Add Step / Seed Label
+## Example workflow
 
-Connect an `IMAGE`, `IIT_META`, and the `seed` output from **IIT Load Version**. The node draws `{step_name}/{seed}` at the top-left of every image using white text on a dark high-contrast background, then returns the labelled `IMAGE` batch.
+Load `example_workflows/iit_1mp_step_seed_label.json` to see the framed end-to-end example. It scales the selected image to **1.0 MP** with the built-in **Scale Image to Total Pixels** node, draws `{step_name}/{seed}` after scaling, then saves the labelled image and matching R1 seed metadata as a candidate.

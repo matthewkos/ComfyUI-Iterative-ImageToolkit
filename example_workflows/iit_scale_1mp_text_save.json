@@ -1,0 +1,394 @@
+{
+  "last_node_id": 5,
+  "last_link_id": 9,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "IITLoadVersion",
+      "pos": [
+        40,
+        80
+      ],
+      "size": [
+        430,
+        520
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "mask",
+          "type": "MASK",
+          "links": [
+            4
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "positive_prompt",
+          "type": "STRING",
+          "links": [
+            5
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "negative_prompt",
+          "type": "STRING",
+          "links": [
+            6
+          ],
+          "slot_index": 3
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "links": [
+            7
+          ],
+          "slot_index": 4
+        },
+        {
+          "name": "metadata_json",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 5
+        },
+        {
+          "name": "iit_meta",
+          "type": "IIT_META",
+          "links": [
+            8,
+            9
+          ],
+          "slot_index": 6
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "IITLoadVersion"
+      },
+      "widgets_values": [
+        "example.png",
+        "example-project",
+        1,
+        "edit",
+        "initial_image",
+        "",
+        "Initial positive prompt",
+        "Initial negative prompt",
+        123456789,
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "ImageScaleToTotalPixels",
+      "pos": [
+        530,
+        100
+      ],
+      "size": [
+        315,
+        150
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ImageScaleToTotalPixels"
+      },
+      "widgets_values": [
+        "bilinear",
+        1.0,
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "type": "TextOverlay",
+      "pos": [
+        900,
+        100
+      ],
+      "size": [
+        340,
+        300
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            3
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "TextOverlay"
+      },
+      "widgets_values": [
+        "01-edit/123456789",
+        5.0,
+        "#ffffff",
+        "top",
+        "left",
+        true
+      ]
+    },
+    {
+      "id": 4,
+      "type": "IITSaveCandidates",
+      "pos": [
+        1300,
+        80
+      ],
+      "size": [
+        420,
+        500
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 3
+        },
+        {
+          "name": "iit_meta",
+          "type": "IIT_META",
+          "link": 8
+        },
+        {
+          "name": "input_mask",
+          "type": "MASK",
+          "link": 4
+        },
+        {
+          "name": "positive_prompt",
+          "type": "STRING",
+          "link": 5
+        },
+        {
+          "name": "negative_prompt",
+          "type": "STRING",
+          "link": 6
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "input_mask",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "positive_prompt",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 2
+        },
+        {
+          "name": "negative_prompt",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "links": null,
+          "slot_index": 4
+        },
+        {
+          "name": "run_json",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "IITSaveCandidates"
+      },
+      "widgets_values": [
+        "fallback-project",
+        1,
+        "fallback-step",
+        "image",
+        ""
+      ]
+    },
+    {
+      "id": 5,
+      "type": "IITViewTrajectory",
+      "pos": [
+        1300,
+        640
+      ],
+      "size": [
+        360,
+        220
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "iit_meta",
+          "type": "IIT_META",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "name": "trajectory_json",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "IITViewTrajectory"
+      },
+      "widgets_values": [
+        "fallback-project",
+        "",
+        true,
+        220
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
+      0,
+      "IMAGE"
+    ],
+    [
+      4,
+      1,
+      1,
+      4,
+      2,
+      "MASK"
+    ],
+    [
+      5,
+      1,
+      2,
+      4,
+      3,
+      "STRING"
+    ],
+    [
+      6,
+      1,
+      3,
+      4,
+      4,
+      "STRING"
+    ],
+    [
+      7,
+      1,
+      4,
+      4,
+      5,
+      "INT"
+    ],
+    [
+      8,
+      1,
+      6,
+      4,
+      1,
+      "IIT_META"
+    ],
+    [
+      9,
+      1,
+      6,
+      5,
+      0,
+      "IIT_META"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "info": {
+      "name": "IIT Load \u2192 1 MP Scale \u2192 Text Overlay \u2192 Save + Trajectory",
+      "version": "1.1.0"
+    }
+  },
+  "version": 0.4
+}

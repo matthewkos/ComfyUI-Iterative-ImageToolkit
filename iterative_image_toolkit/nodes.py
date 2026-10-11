@@ -446,57 +446,6 @@ class IITLoadVersion:
         return True
 
 
-class IITAddStepSeedLabel:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "images": ("IMAGE", {"tooltip": "Image batch on which the step/seed label will be drawn."}),
-                "iit_meta": ("IIT_META", {"tooltip": "Project context from IIT Load Version. Its step_name is shown before the slash."}),
-                "seed": ("INT", {"forceInput": True, "tooltip": "Seed shown after the slash. Connect IIT Load Version's seed output."}),
-                "font_size": ("INT", {"default": 36, "min": 8, "max": 512, "tooltip": "Label font size in pixels."}),
-                "padding": ("INT", {"default": 12, "min": 0, "max": 256, "tooltip": "Distance from the top-left image edges."}),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("images",)
-    OUTPUT_TOOLTIPS = ("Input image batch with a {step_name}/{seed} label drawn at the top-left.",)
-    FUNCTION = "draw"
-    CATEGORY = CATEGORY
-    DESCRIPTION = "Draws {step_name}/{seed} at the top of every image with a high-contrast background."
-
-    @staticmethod
-    def _font(size):
-        from PIL import ImageFont
-        for candidate in ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "C:/Windows/Fonts/arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf"):
-            try:
-                return ImageFont.truetype(candidate, size=size)
-            except OSError:
-                continue
-        return ImageFont.load_default()
-
-    def draw(self, images, iit_meta, seed, font_size=36, padding=12):
-        from PIL import ImageDraw
-        if not isinstance(iit_meta, dict) or "step_name" not in iit_meta:
-            raise ValueError("iit_meta must contain step_name")
-        label = f"{iit_meta['step_name']}/{int(seed)}"
-        arrays = tensor_to_rgb(images)
-        if arrays.ndim == 3:
-            arrays = arrays[None, ...]
-        font = self._font(int(font_size))
-        rendered = []
-        for array in arrays:
-            image = Image.fromarray(array, mode="RGB")
-            draw = ImageDraw.Draw(image)
-            left, top = int(padding), int(padding)
-            box = draw.textbbox((left, top), label, font=font, stroke_width=1)
-            margin = max(4, int(font_size) // 6)
-            draw.rounded_rectangle((box[0]-margin, box[1]-margin, box[2]+margin, box[3]+margin), radius=max(2, margin//2), fill=(0,0,0))
-            draw.text((left, top), label, font=font, fill=(255,255,255), stroke_width=1, stroke_fill=(0,0,0))
-            rendered.append(np.asarray(image, dtype=np.uint8))
-        return (torch.from_numpy(np.stack(rendered).astype(np.float32) / 255.0),)
-
 
 class IITViewTrajectory:
     @classmethod
@@ -640,7 +589,6 @@ NODE_CLASS_MAPPINGS = {
     "IITSaveCandidates": IITSaveCandidates,
     "IITLoadVersion": IITLoadVersion,
     "IITLocateEditedCrop": IITLocateEditedCrop,
-    "IITAddStepSeedLabel": IITAddStepSeedLabel,
     "IITViewTrajectory": IITViewTrajectory,
 }
 
@@ -648,6 +596,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "IITSaveCandidates": "IIT Save Candidate Run",
     "IITLoadVersion": "IIT Load Version",
     "IITLocateEditedCrop": "IIT Locate Edited Crop",
-    "IITAddStepSeedLabel": "IIT Add Step / Seed Label",
     "IITViewTrajectory": "IIT View Trajectory",
 }

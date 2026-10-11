@@ -5,7 +5,8 @@
 - Make IIT Load Version a Load Image replacement with initial upload, manual prompts/seed, saved-source restoration, and IIT_META.
 - Let IIT Save Candidate Run consume IIT_META and disable overridden project widgets.
 - Require descriptions for nodes, inputs, outputs, conditional inputs, and custom datatypes.
-- Add the bilinear load-scale-save example workflow and regression tests.
+- Update the example workflow to use ComfyUI core Scale Image to Total Pixels at 1.0 MP, followed by Draw Text Overlay and candidate saving.
+- Remove the IIT Add Step / Seed Label custom node; the example now uses the core text-overlay node.
 
 ## 0.1.0
 

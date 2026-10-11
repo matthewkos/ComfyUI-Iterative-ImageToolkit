@@ -52,11 +52,20 @@ function currentCandidateId(step) {
 function promotedIds(step) {
   return new Set((step.versions || []).filter((item) => item.promoted_to_step_key).map((item) => item.accepted_candidate_id));
 }
+function candidateName(candidate) {
+  if (!candidate) return "Unknown candidate";
+  const path = String(candidate.image_path || "");
+  const filename = path.split(/[\\/]/).pop();
+  return filename || candidate.candidate_id || "Unnamed candidate";
+}
 function candidateLabel(candidate, currentId, promoted, letter = "") {
+  if (!candidate) return `${letter ? `${letter} · ` : ""}Unknown candidate`;
   const tags = [];
   if (candidate.candidate_id === currentId) tags.push("CURRENT");
   if (promoted.has(candidate.candidate_id)) tags.push("PROMOTED");
-  return `${letter ? `${letter} · ` : ""}${candidate.candidate_id}${tags.length ? ` · ${tags.join(" · ")}` : ""}`;
+  const name = candidateName(candidate);
+  const identity = name === candidate.candidate_id ? name : `${name} · ${candidate.candidate_id}`;
+  return `${letter ? `${letter} · ` : ""}${identity}${tags.length ? ` · ${tags.join(" · ")}` : ""}`;
 }
 function labelledControl(label, control) {
   const wrapper = document.createElement("label");
@@ -130,7 +139,7 @@ function createViewer(node, selected, mode, roi, candidates, currentId, promoted
       image.style.clipPath = crop;
       const caption = document.createElement("figcaption");
       const line = document.createElement("strong");
-      line.textContent = `${letter} · ${id}`;
+      line.textContent = candidateLabel(candidate, currentId, promoted, letter);
       const details = document.createElement("span");
       details.textContent = `Seed: ${candidate.seed ?? "unknown"}`;
       caption.append(line, details);
@@ -236,7 +245,7 @@ async function openBrowser(node) {
   panel.append(controls);
 
   const comparisonLabels = document.createElement("section"); comparisonLabels.className = "iit-comparison-labels"; panel.append(comparisonLabels);
-  const viewerHolder = document.createElement("main"); panel.append(viewerHolder);
+  const viewerHolder = document.createElement("main"); viewerHolder.className = "iit-viewer-holder"; panel.append(viewerHolder);
   const actionStatus = document.createElement("div"); actionStatus.className = "iit-action-status";
   const footer = document.createElement("footer"); footer.className = "iit-footer";
   const mask = document.createElement("button"); mask.textContent = "Stage A for Mask Editor";
@@ -254,7 +263,8 @@ async function openBrowser(node) {
       makeBadge(candidateLabel(byId.get(selectors[0].value), currentId, promoted, "A"), "iit-action-badge"),
       makeBadge(candidateLabel(byId.get(selectors[1].value), currentId, promoted, "B")),
     );
-    actionStatus.textContent = `Actions apply to A only: ${selectors[0].value}`;
+    const selectedA = byId.get(selectors[0].value);
+    actionStatus.textContent = `Actions apply to A only: ${candidateName(selectedA)} · ${selectors[0].value}`;
     const roi = { enabled: roiToggle.checked, x: Number(roiInputs[0].value), y: Number(roiInputs[1].value), w: Number(roiInputs[2].value), h: Number(roiInputs[3].value) };
     const swapIntoA = (index) => { const oldA = selectors[0].value; selectors[0].value = selectors[index].value; selectors[index].value = oldA; render(); };
     viewerHolder.replaceChildren(createViewer(node, selected, mode.value, roi, candidates, currentId, promoted, swapIntoA));
