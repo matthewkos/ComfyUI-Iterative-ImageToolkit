@@ -1,7 +1,5 @@
 # Example workflows
 
-Example workflow JSON should be exported from a tested ComfyUI instance before release. Suggested graphs:
+- `iit-load-scale-save.json`: **IIT Load Version → Image Scale (bilinear) → IIT Save Candidate Run**. The IMAGE passes through scaling and `IIT_META` supplies the same project/step context to the save node.
 
-1. Load Image/Mask → edit pipeline → IIT Save Candidate Run.
-2. IIT Load Version → edit pipeline → IIT Save Candidate Run.
-3. Load A + Load B → IIT Locate Edited Crop → Preview aligned crop/heatmap.
+The workflow references `example.png` as a placeholder. Choose or upload a real image in IIT Load Version before queueing.

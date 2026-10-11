@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ from .storage import (
     resolve_selection,
     resolve_storage_root,
     slug,
+    step_key as make_step_key,
     utc_now,
 )
 
@@ -61,21 +64,13 @@ class IITSaveCandidates:
             "required": {
                 "images": (
                     "IMAGE",
-                    {
-                        "tooltip": (
-                            "The image batch to save as candidates. One execution creates one run, "
-                            "and each image in the batch becomes a separate candidate in that run."
-                        )
-                    },
+                    {"tooltip": "Image batch to save. One queue execution creates one run; each batch image becomes a candidate."},
                 ),
                 "project_name": (
                     "STRING",
                     {
                         "default": "my-project",
-                        "tooltip": (
-                            "Name of the editing project. It identifies the project's storage folder "
-                            "and groups all steps, runs, candidates, and accepted versions."
-                        ),
+                        "tooltip": "Fallback project name used only when iit_meta is not connected. Connected IIT_META overrides and disables this widget.",
                     },
                 ),
                 "step_idx": (
@@ -84,91 +79,68 @@ class IITSaveCandidates:
                         "default": 1,
                         "min": 1,
                         "max": 9999,
-                        "tooltip": (
-                            "Numeric order of this editing step, such as 1 for color correction or "
-                            "2 for reshaping. It is used in the step folder name."
-                        ),
+                        "tooltip": "Fallback step number used only when iit_meta is not connected. Connected IIT_META overrides and disables this widget.",
                     },
                 ),
                 "step_name": (
                     "STRING",
                     {
                         "default": "edit",
-                        "tooltip": (
-                            "Human-readable name of this editing step, such as 'color', 'reshape', "
-                            "or 'add-content'. It is combined with step_idx to identify the step."
-                        ),
+                        "tooltip": "Fallback step name used only when iit_meta is not connected. Connected IIT_META overrides and disables this widget.",
                     },
                 ),
                 "image_name": (
                     "STRING",
                     {
                         "default": "image",
-                        "tooltip": (
-                            "Base filename used for candidate PNG and JSON files. Run and candidate "
-                            "identifiers are appended automatically."
-                        ),
+                        "tooltip": "Base filename for candidate PNG and JSON files. Run/candidate identifiers are appended. IIT_META does not override this field.",
                     },
                 ),
                 "storage_root": (
                     "STRING",
                     {
                         "default": "",
-                        "tooltip": (
-                            "Optional absolute root folder for all Iterative Image Toolkit projects. "
-                            "Leave blank to use ComfyUI/output/iterative-image-toolkit."
-                        ),
+                        "tooltip": "Fallback storage root used only without iit_meta. Blank uses ComfyUI/output/iterative-image-toolkit. Connected IIT_META overrides it.",
                     },
                 ),
             },
             "optional": {
+                "iit_meta": (
+                    "IIT_META",
+                    {
+                        "tooltip": "Project context from IIT Load Version. When connected, project_name, step_idx, step_name, step_key and storage_root override the fallback widgets."
+                    },
+                ),
                 "input_mask": (
                     "MASK",
-                    {
-                        "tooltip": (
-                            "Optional mask associated with the input image for this run. It is saved "
-                            "once with the run and restored when a candidate from the run is loaded."
-                        )
-                    },
+                    {"tooltip": "Optional mask associated with this run. It is saved once and restored when a candidate from the run is loaded."},
                 ),
                 "positive_prompt": (
                     "STRING",
                     {
                         "forceInput": True,
-                        "tooltip": (
-                            "Optional positive prompt used to create this run. It is stored in each "
-                            "candidate's metadata and can be restored by IIT Load Version."
-                        ),
+                        "tooltip": "Optional positive prompt stored in each candidate. Connect IIT Load Version to preserve manual or restored metadata.",
                     },
                 ),
                 "negative_prompt": (
                     "STRING",
                     {
                         "forceInput": True,
-                        "tooltip": (
-                            "Optional negative prompt used to create this run. It is stored in each "
-                            "candidate's metadata and can be restored by IIT Load Version."
-                        ),
+                        "tooltip": "Optional negative prompt stored in each candidate. Connect IIT Load Version to preserve manual or restored metadata.",
                     },
                 ),
                 "seed": (
                     "INT",
                     {
                         "forceInput": True,
-                        "tooltip": (
-                            "Optional generation seed associated with this run. It is stored with "
-                            "each candidate so the selected version can restore the seed later."
-                        ),
+                        "tooltip": "Optional generation seed stored in each candidate. Connect IIT Load Version to preserve manual or restored metadata.",
                     },
                 ),
                 "input_image_name": (
                     "STRING",
                     {
                         "forceInput": True,
-                        "tooltip": (
-                            "Optional name or reference of the image used as this step's input. "
-                            "This is metadata for tracing the candidate's source; it does not load a file."
-                        ),
+                        "tooltip": "Optional source-image name for traceability. This metadata field does not load a file.",
                     },
                 ),
             },
@@ -176,38 +148,40 @@ class IITSaveCandidates:
         }
 
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "INT", "STRING")
-    RETURN_NAMES = (
-        "images",
-        "input_mask",
-        "positive_prompt",
-        "negative_prompt",
-        "seed",
-        "run_json",
-    )
+    RETURN_NAMES = ("images", "input_mask", "positive_prompt", "negative_prompt", "seed", "run_json")
     OUTPUT_TOOLTIPS = (
-        "The original image batch, passed through unchanged for previewing or further processing.",
-        (
-            "The optional input mask, passed through unchanged. If no mask was supplied, this returns "
-            "an empty mask matching the image batch dimensions."
-        ),
-        "The positive prompt supplied to this node, or an empty string when it was not connected.",
-        "The negative prompt supplied to this node, or an empty string when it was not connected.",
-        "The seed supplied to this node, or -1 when no seed was connected.",
-        (
-            "A JSON string describing the saved project, step, run ID, and all candidates created "
-            "during this execution."
-        ),
+        "Original image batch passed through unchanged.",
+        "Connected input mask, or an empty mask matching the image batch when no mask was supplied.",
+        "Connected positive prompt, or an empty string.",
+        "Connected negative prompt, or an empty string.",
+        "Connected seed, or -1 when absent.",
+        "JSON describing the effective project/step, run ID and candidates created by this execution.",
     )
     FUNCTION = "save"
     CATEGORY = CATEGORY
     OUTPUT_NODE = True
     DESCRIPTION = (
-        "Saves one generated image batch as a versioned candidate run. Each queue execution becomes "
-        "one run, while each image in the batch becomes an individual candidate. Candidate PNG files, "
-        "sidecar JSON metadata, optional prompts, seed, mask, and source image name are recorded under "
-        "the selected project and step. This node only records candidates; use IIT Load Version's "
-        "Version Browser to accept a candidate or promote it to the next step."
+        "Saves a generated image batch as a versioned candidate run without overwriting earlier candidates. "
+        "Each queue is one run and each batch image is one candidate. Connect IIT_META from IIT Load Version "
+        "to reuse the same project and step automatically; otherwise the local project widgets are used."
     )
+
+    @staticmethod
+    def _project_context(project_name, step_idx, step_name, storage_root, iit_meta):
+        if iit_meta is None:
+            return project_name, int(step_idx), step_name, storage_root, make_step_key(step_idx, step_name)
+        if not isinstance(iit_meta, dict):
+            raise TypeError("iit_meta must be an IIT_META object produced by IIT Load Version")
+        required = {"project_name", "step_idx", "step_name", "step_key", "storage_root"}
+        missing = sorted(required.difference(iit_meta))
+        if missing:
+            raise ValueError(f"iit_meta is missing required fields: {', '.join(missing)}")
+        idx = int(iit_meta["step_idx"])
+        name = str(iit_meta["step_name"])
+        expected = make_step_key(idx, name)
+        if str(iit_meta["step_key"]) != expected:
+            raise ValueError(f"iit_meta step_key {iit_meta['step_key']!r} does not match step_idx/step_name ({expected!r})")
+        return str(iit_meta["project_name"]), idx, name, str(iit_meta["storage_root"] or ""), expected
 
     def save(
         self,
@@ -217,6 +191,7 @@ class IITSaveCandidates:
         step_name: str,
         image_name: str,
         storage_root: str = "",
+        iit_meta: dict[str, Any] | None = None,
         input_mask: torch.Tensor | None = None,
         positive_prompt: str = "",
         negative_prompt: str = "",
@@ -225,231 +200,223 @@ class IITSaveCandidates:
         prompt: dict[str, Any] | None = None,
         extra_pnginfo: dict[str, Any] | None = None,
     ):
+        project_name, step_idx, step_name, storage_root, expected_key = self._project_context(
+            project_name, step_idx, step_name, storage_root, iit_meta
+        )
         root = resolve_storage_root(storage_root, folder_paths.get_output_directory())
         project = project_dir(root, project_name)
-        project.mkdir(parents=True, exist_ok=True)
-
-        manifest = load_manifest(project, create=True, project_name=project_name)
-        from .storage import ensure_step, next_number
-
-        key, step = ensure_step(manifest, step_idx, step_name)
-        run_no = next_number(step["runs"], "run_id")
-        run_id = f"run-{run_no:04d}"
+        manifest, key, run_id = register_run(root, project_name, step_idx, step_name, image_name, [])
+        if key != expected_key:
+            raise RuntimeError(f"Resolved step key changed unexpectedly: {key} != {expected_key}")
+        step = find_step(manifest, key)
+        run = next(item for item in step["runs"] if item["run_id"] == run_id)
         run_dir = project / key / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = slug(image_name, "image")
-        candidates: list[dict[str, Any]] = []
-
         mask_rel = None
         if input_mask is not None:
-            mask_file = run_dir / f"{safe_name}-input-mask.png"
-            save_mask(input_mask, mask_file)
-            mask_rel = mask_file.relative_to(project).as_posix()
-
-        for index, image in enumerate(images):
-            candidate_id = f"{run_id}-candidate-{index + 1:03d}"
-            basename = f"{safe_name}-{run_id}-candidate-{index + 1:03d}"
-            image_file = run_dir / f"{basename}.png"
-            sidecar_file = run_dir / f"{basename}.json"
-            Image.fromarray(tensor_to_rgb(image), mode="RGB").save(
-                image_file, format="PNG", compress_level=4
-            )
+            mask_rel = str((Path(key) / "runs" / run_id / f"{slug(image_name)}-input-mask.png").as_posix())
+            save_mask(input_mask, project / mask_rel)
+        candidates = []
+        arrays = tensor_to_rgb(images)
+        if arrays.ndim == 3:
+            arrays = arrays[None, ...]
+        for index, array in enumerate(arrays, start=1):
+            candidate_id = f"{run_id}-candidate-{index:03d}"
+            stem = f"{slug(image_name)}-{run_id}-candidate-{index:03d}"
+            image_rel = Path(key) / "runs" / run_id / f"{stem}.png"
+            json_rel = image_rel.with_suffix(".json")
+            Image.fromarray(array, mode="RGB").save(project / image_rel, format="PNG")
             candidate = {
                 "candidate_id": candidate_id,
-                "candidate_index": index + 1,
                 "created_at": utc_now(),
-                "image_path": image_file.relative_to(project).as_posix(),
-                "sidecar_path": sidecar_file.relative_to(project).as_posix(),
+                "image_path": image_rel.as_posix(),
+                "sidecar_path": json_rel.as_posix(),
                 "input_mask_path": mask_rel,
                 "input_image_name": input_image_name or None,
-                "positive_prompt": positive_prompt or "",
-                "negative_prompt": negative_prompt or "",
-                "seed": seed,
-            }
-            sidecar = {
-                **candidate,
-                "project_name": project_name,
-                "step_idx": int(step_idx),
-                "step_name": step_name,
-                "run_id": run_id,
-                "comfy_prompt": prompt,
+                "positive_prompt": positive_prompt or None,
+                "negative_prompt": negative_prompt or None,
+                "seed": int(seed) if seed is not None else None,
+                "batch_index": index - 1,
+                "workflow_prompt": prompt,
                 "extra_pnginfo": extra_pnginfo,
             }
-            atomic_write_json(sidecar_file, sidecar)
+            atomic_write_json(project / json_rel, candidate)
             candidates.append(candidate)
-
-        _, key, registered_run_id = register_run(
-            root, project_name, step_idx, step_name, image_name, candidates
-        )
-        if registered_run_id != run_id:
-            raise RuntimeError("Concurrent run allocation conflict; retry the queue")
+        run["candidates"] = candidates
+        atomic_write_json(project / "project.json", manifest)
         output_mask = (
-            input_mask
-            if input_mask is not None
-            else torch.zeros(
-                (images.shape[0], images.shape[1], images.shape[2]),
-                dtype=images.dtype,
-                device=images.device,
-            )
+            torch.zeros((images.shape[0], images.shape[1], images.shape[2]), dtype=torch.float32, device=images.device)
+            if input_mask is None
+            else input_mask
         )
         run_json = json.dumps(
-            {
-                "project": project_name,
-                "step_key": key,
-                "run_id": run_id,
-                "candidates": candidates,
-            },
+            {"project_name": project_name, "step_key": key, "run_id": run_id, "candidates": candidates},
             ensure_ascii=False,
         )
-        return (
-            images,
-            output_mask,
-            positive_prompt or "",
-            negative_prompt or "",
-            int(seed) if seed is not None else -1,
-            run_json,
-        )
+        return images, output_mask, positive_prompt or "", negative_prompt or "", int(seed) if seed is not None else -1, run_json
 
 
 class IITLoadVersion:
+    SOURCE_INITIAL = "initial_image"
+    SOURCE_CURRENT = "current_version"
+    SOURCE_CANDIDATE = "candidate"
+
     @classmethod
     def INPUT_TYPES(cls):
+        input_dir = folder_paths.get_input_directory()
+        files = []
+        if os.path.isdir(input_dir):
+            files = [name for name in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, name))]
+            filter_images = getattr(folder_paths, "filter_files_content_types", None)
+            if filter_images is not None:
+                files = filter_images(files, ["image"])
         return {
             "required": {
+                "image": (
+                    sorted(files),
+                    {
+                        "image_upload": True,
+                        "tooltip": "Initial image from ComfyUI input. Upload/select it like Load Image. Used only in initial_image mode and compatible with the native Mask Editor image widget.",
+                    },
+                ),
                 "project_name": (
                     "STRING",
-                    {
-                        "default": "my-project",
-                        "tooltip": (
-                            "Name of the existing Iterative Image Toolkit project to load. It must "
-                            "match the project_name used by IIT Save Candidate Run."
-                        ),
-                    },
+                    {"default": "my-project", "tooltip": "Project name used for loading saved versions and emitted in IIT_META for IIT Save Candidate Run."},
                 ),
-                "step_key": (
+                "step_idx": (
+                    "INT",
+                    {"default": 1, "min": 1, "max": 9999, "tooltip": "Numeric step order. Combined with step_name to form step_key and emitted in IIT_META."},
+                ),
+                "step_name": (
                     "STRING",
-                    {
-                        "default": "01-edit",
-                        "tooltip": (
-                            "Exact step identifier to load, formatted as the zero-padded step index "
-                            "plus the sanitized step name, for example '01-color'."
-                        ),
-                    },
+                    {"default": "edit", "tooltip": "Human-readable step name. Combined with step_idx to form step_key and emitted in IIT_META."},
                 ),
-                "selection": (
-                    ["current", "candidate"],
+                "source": (
+                    [cls.SOURCE_INITIAL, cls.SOURCE_CURRENT, cls.SOURCE_CANDIDATE],
                     {
-                        "tooltip": (
-                            "Choose 'current' to load the candidate referenced by this step's accepted "
-                            "current version. Choose 'candidate' to load the exact candidate_id below."
-                        )
+                        "tooltip": "Selects one coherent source for image, mask, prompts and seed. Initial uses this node's image/manual fields; current_version restores the accepted candidate; candidate restores candidate_id."
                     },
                 ),
                 "candidate_id": (
                     "STRING",
-                    {
-                        "default": "",
-                        "tooltip": (
-                            "Exact candidate identifier, such as 'run-0003-candidate-002'. This field "
-                            "is required only when selection is set to 'candidate'."
-                        ),
-                    },
+                    {"default": "", "tooltip": "Exact ID such as run-0003-candidate-002. Used and enabled only when source is candidate."},
+                ),
+                "positive_prompt": (
+                    "STRING",
+                    {"default": "", "multiline": True, "tooltip": "Manual positive prompt used only in initial_image mode. Saved-source modes restore candidate metadata instead."},
+                ),
+                "negative_prompt": (
+                    "STRING",
+                    {"default": "", "multiline": True, "tooltip": "Manual negative prompt used only in initial_image mode. Saved-source modes restore candidate metadata instead."},
+                ),
+                "seed": (
+                    "INT",
+                    {"default": -1, "min": -1, "max": 0x7FFFFFFFFFFFFFFF, "tooltip": "Manual seed used only in initial_image mode. Use -1 if unknown; saved-source modes restore candidate metadata."},
                 ),
                 "storage_root": (
                     "STRING",
-                    {
-                        "default": "",
-                        "tooltip": (
-                            "Optional absolute root folder containing the project. Leave blank to use "
-                            "ComfyUI/output/iterative-image-toolkit. Use the same root used when saving."
-                        ),
-                    },
+                    {"default": "", "tooltip": "Project storage root emitted in IIT_META. Blank uses ComfyUI/output/iterative-image-toolkit."},
                 ),
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "INT", "STRING")
-    RETURN_NAMES = (
-        "image",
-        "mask",
-        "positive_prompt",
-        "negative_prompt",
-        "seed",
-        "metadata_json",
-    )
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "INT", "STRING", "IIT_META")
+    RETURN_NAMES = ("image", "mask", "positive_prompt", "negative_prompt", "seed", "metadata_json", "iit_meta")
     OUTPUT_TOOLTIPS = (
-        "The RGB image stored for the resolved current version or requested candidate.",
-        (
-            "The mask associated with the candidate's original run. If no saved mask exists, this "
-            "returns the mask encoded in the image alpha channel or an empty mask."
-        ),
-        "The positive prompt saved with the selected candidate, or an empty string if none was recorded.",
-        "The negative prompt saved with the selected candidate, or an empty string if none was recorded.",
-        "The seed saved with the selected candidate, or -1 if no seed was recorded.",
-        (
-            "A formatted JSON string containing the selected candidate's IDs, file references, prompts, "
-            "seed, source image name, project name, and step key."
-        ),
+        "Initial image or saved candidate selected by source.",
+        "Initial alpha/Mask Editor mask or the selected candidate run's saved mask; empty when none exists.",
+        "Manual positive prompt in initial mode, otherwise the restored candidate prompt.",
+        "Manual negative prompt in initial mode, otherwise the restored candidate prompt.",
+        "Manual seed in initial mode, otherwise the restored candidate seed or -1.",
+        "Formatted JSON describing the resolved image/metadata source.",
+        "Project context for IIT Save Candidate Run: schema_version, project_name, step_idx, step_name, step_key and storage_root.",
     )
     FUNCTION = "load"
     CATEGORY = CATEGORY
     DESCRIPTION = (
-        "Loads an accepted current version or a specific saved candidate from one project step, together "
-        "with its associated mask, positive prompt, negative prompt, seed, and metadata. Use the node's "
-        "Open Version Browser button to compare candidates, set one as the current version, promote it to "
-        "the next step, or stage it for ComfyUI's native Mask Editor."
+        "Replaces Load Image for an iterative project step. Begin by uploading/selecting an initial image and entering optional multiline prompts and a seed. "
+        "Later switch source to the current accepted version or a candidate to restore its image, mask, prompts and seed together. IIT_META carries the same project/step to IIT Save Candidate Run."
     )
 
-    def load(
-        self,
-        project_name: str,
-        step_key: str,
-        selection: str,
-        candidate_id: str,
-        storage_root: str = "",
-    ):
+    @staticmethod
+    def _meta(project_name, step_idx, step_name, storage_root):
+        return {
+            "schema_version": 1,
+            "project_name": project_name,
+            "step_idx": int(step_idx),
+            "step_name": step_name,
+            "step_key": make_step_key(step_idx, step_name),
+            "storage_root": storage_root or "",
+        }
+
+    @staticmethod
+    def _initial_image_path(image):
+        return Path(folder_paths.get_annotated_filepath(image))
+
+    def load(self, image, project_name, step_idx, step_name, source, candidate_id, positive_prompt, negative_prompt, seed, storage_root=""):
+        meta = self._meta(project_name, step_idx, step_name, storage_root)
+        if source == self.SOURCE_INITIAL:
+            loaded_image, loaded_mask = load_image_and_mask(self._initial_image_path(image))
+            metadata = {
+                "source": source,
+                "image": image,
+                "positive_prompt": positive_prompt or "",
+                "negative_prompt": negative_prompt or "",
+                "seed": int(seed),
+                **meta,
+            }
+            return loaded_image, loaded_mask, positive_prompt or "", negative_prompt or "", int(seed), json.dumps(metadata, ensure_ascii=False, indent=2), meta
+        if source not in {self.SOURCE_CURRENT, self.SOURCE_CANDIDATE}:
+            raise ValueError(f"Unknown source: {source}")
         root = resolve_storage_root(storage_root, folder_paths.get_output_directory())
         project = project_dir(root, project_name)
         manifest = load_manifest(project)
-        step = find_step(manifest, step_key)
-        resolved_id = resolve_selection(step, selection, candidate_id)
+        step = find_step(manifest, meta["step_key"])
+        resolved_id = resolve_selection(step, "current" if source == self.SOURCE_CURRENT else "candidate", candidate_id)
         candidate = find_candidate(manifest, step, resolved_id)
-        image, alpha_mask = load_image_and_mask(candidate_path(project, candidate))
+        loaded_image, loaded_mask = load_image_and_mask(candidate_path(project, candidate))
         mask_path = candidate.get("input_mask_path")
-        if mask_path:
-            mask_file = project / mask_path
-            if mask_file.exists():
-                mask_array = np.asarray(
-                    Image.open(mask_file).convert("L"), dtype=np.float32
-                ) / 255.0
-                alpha_mask = torch.from_numpy(mask_array).unsqueeze(0)
+        if mask_path and (project / mask_path).exists():
+            mask_array = np.asarray(Image.open(project / mask_path).convert("L"), dtype=np.float32) / 255.0
+            loaded_mask = torch.from_numpy(mask_array).unsqueeze(0)
         metadata = dict(candidate)
-        metadata.update({"project_name": project_name, "step_key": step_key})
+        metadata.update({"source": source, **meta})
         return (
-            image,
-            alpha_mask,
+            loaded_image,
+            loaded_mask,
             candidate.get("positive_prompt") or "",
             candidate.get("negative_prompt") or "",
             int(candidate["seed"]) if candidate.get("seed") is not None else -1,
             json.dumps(metadata, ensure_ascii=False, indent=2),
+            meta,
         )
 
     @classmethod
-    def IS_CHANGED(
-        cls,
-        project_name: str,
-        step_key: str,
-        selection: str,
-        candidate_id: str,
-        storage_root: str = "",
-    ):
+    def IS_CHANGED(cls, image, project_name, step_idx, step_name, source, candidate_id, positive_prompt, negative_prompt, seed, storage_root=""):
+        if source == cls.SOURCE_INITIAL:
+            digest = hashlib.sha256()
+            with cls._initial_image_path(image).open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            for value in (positive_prompt, negative_prompt, project_name, str(int(step_idx)), step_name, storage_root, str(int(seed))):
+                digest.update((value or "").encode("utf-8"))
+            return digest.hexdigest()
         root = resolve_storage_root(storage_root, folder_paths.get_output_directory())
-        project = project_dir(root, project_name)
-        manifest_file = project / "project.json"
-        return (
-            f"{manifest_file.stat().st_mtime_ns if manifest_file.exists() else 0}:"
-            f"{selection}:{candidate_id}"
-        )
+        manifest_file = project_dir(root, project_name) / "project.json"
+        return f"{manifest_file.stat().st_mtime_ns if manifest_file.exists() else 0}:{make_step_key(step_idx, step_name)}:{source}:{candidate_id}"
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, image, project_name, step_idx, step_name, source, candidate_id, positive_prompt, negative_prompt, seed, storage_root=""):
+        if source == cls.SOURCE_INITIAL:
+            exists = getattr(folder_paths, "exists_annotated_filepath", None)
+            if exists is not None and not exists(image):
+                return f"Invalid initial image file: {image}"
+            return True
+        if source == cls.SOURCE_CANDIDATE and not candidate_id.strip():
+            return "candidate_id is required when source is 'candidate'"
+        if source not in {cls.SOURCE_CURRENT, cls.SOURCE_CANDIDATE}:
+            return f"Unknown source: {source}"
+        return True
 
 
 class IITLocateEditedCrop:

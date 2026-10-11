@@ -10,6 +10,7 @@ Treats one queue execution as a `run` and every image in the input batch as a `c
 
 Optional connected inputs:
 
+- `iit_meta` — project/step context from IIT Load Version; overrides the save node project widgets
 - `input_mask`
 - `positive_prompt`
 - `negative_prompt`
@@ -18,7 +19,7 @@ Optional connected inputs:
 
 ### IIT Load Version
 
-Loads either the current accepted version or a candidate. It returns `IMAGE`, `MASK`, positive prompt, negative prompt, seed, and metadata JSON. Use **Open Version Browser** to compare candidates, set the current version, promote it to the next step, or stage it under ComfyUI input for the native Mask Editor.
+Replaces Load Image for iterative projects. Start by uploading/selecting an initial image and entering optional multiline prompts and a seed. Later switch `source` to `current_version` or `candidate` to restore image, mask, prompts, and seed together. It also outputs `IIT_META` with project/step context for IIT Save Candidate Run.
 
 ### IIT Locate Edited Crop
 
@@ -69,11 +70,7 @@ Restart ComfyUI and find the nodes under **Iterative Image Toolkit**.
 
 ## Mask Editor workflow
 
-1. Open **IIT Load Version → Open Version Browser**.
-2. Select a candidate and click **Stage for Mask Editor**.
-3. Add a native **Load Image** node and select the staged file shown in the notification.
-4. Right-click that node and choose **Open in Mask Editor**.
-5. Connect its `IMAGE` and `MASK` outputs to the editing workflow.
+IIT Load Version uses the same `image` upload/selection contract as Load Image, so initial images can use ComfyUI native Mask Editor directly. For a saved candidate, select it in the Version Browser and click **Stage for Mask Editor**; the staged input is selected on the same IIT Load Version node.
 
 ## Development
 

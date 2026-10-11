@@ -20,6 +20,16 @@ function value(node, name) {
   return widget(node, name)?.value ?? "";
 }
 
+function stepKey(node) {
+  const index = String(Number(value(node, "step_idx"))).padStart(2, "0");
+  const name = String(value(node, "step_name"))
+    .trim()
+    .replace(/[^A-Za-z0-9._ -]+/g, "-")
+    .replace(/[ .-]+/g, "-")
+    .replace(/^[ .-]+|[ .-]+$/g, "") || "step";
+  return `${index}-${name}`;
+}
+
 async function fetchJson(url, options = {}) {
   const response = await api.fetchApi(url, options);
   const body = await response.json();
@@ -31,7 +41,7 @@ function query(node, extras = {}) {
   return new URLSearchParams({
     project_name: value(node, "project_name"),
     storage_root: value(node, "storage_root"),
-    step_key: value(node, "step_key"),
+    step_key: stepKey(node),
     ...extras,
   });
 }
@@ -45,8 +55,8 @@ function candidateUrl(node, candidateId) {
 }
 
 function currentStep(manifest, node) {
-  const step = manifest.steps?.[value(node, "step_key")];
-  if (!step) throw new Error(`Step not found: ${value(node, "step_key")}`);
+  const step = manifest.steps?.[stepKey(node)];
+  if (!step) throw new Error(`Step not found: ${stepKey(node)}`);
   return step;
 }
 
@@ -159,7 +169,7 @@ async function openBrowser(node) {
   panel.className = "iit-panel";
   dialog.append(panel);
   const header = document.createElement("header");
-  header.innerHTML = `<div><strong>${manifest.project_name}</strong><small>${value(node, "step_key")}</small></div>`;
+  header.innerHTML = `<div><strong>${manifest.project_name}</strong><small>${stepKey(node)}</small></div>`;
   const close = document.createElement("button");
   close.textContent = "Close";
   close.onclick = () => dialog.close();
@@ -222,10 +232,11 @@ async function openBrowser(node) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_name: value(node, "project_name"), storage_root: value(node, "storage_root"),
-          step_key: value(node, "step_key"), candidate_id: selectA.value, action,
+          step_key: stepKey(node), candidate_id: selectA.value, action,
         }),
       });
-      widget(node, "selection").value = "current";
+      widget(node, "source").value = "current_version";
+      refreshLoadControls(node);
       widget(node, "candidate_id").value = selectA.value;
       node.setDirtyCanvas(true, true);
       toast("success", action === "promote" ? "Version promoted" : "Current version set", result.version_id);
@@ -241,10 +252,22 @@ async function openBrowser(node) {
       const result = await fetchJson("/iit/stage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ project_name: value(node, "project_name"), storage_root: value(node, "storage_root"), step_key: value(node, "step_key"), candidate_id: selectA.value }),
+        body: JSON.stringify({ project_name: value(node, "project_name"), storage_root: value(node, "storage_root"), step_key: stepKey(node), candidate_id: selectA.value }),
       });
       await navigator.clipboard.writeText(result.image).catch(() => {});
-      toast("info", "Staged for Mask Editor", `Added to ComfyUI input as ${result.image}. Add a Load Image node, select this file, then open the native Mask Editor.`);
+      const imageWidget = widget(node, "image");
+      const sourceWidget = widget(node, "source");
+      if (imageWidget) {
+        const values = imageWidget.options?.values;
+        if (Array.isArray(values) && !values.includes(result.image)) values.push(result.image);
+        const previous = imageWidget.value;
+        imageWidget.value = result.image;
+        imageWidget.callback?.(result.image, app.canvas, node, [0, 0], null);
+        node.onWidgetChanged?.("image", result.image, previous, imageWidget);
+      }
+      if (sourceWidget) sourceWidget.value = "initial_image";
+      refreshLoadControls(node);
+      toast("info", "Staged in IIT Load Version", `${result.image} is now selected on this node. Open its preview/context menu and choose Open in Mask Editor.`);
     } catch (error) {
       toast("error", "Staging failed", error.message);
     }
@@ -256,16 +279,71 @@ async function openBrowser(node) {
   dialog.showModal();
 }
 
+function setWidgetEnabled(item, enabled) {
+  if (!item) return;
+  if (!item.options) item.options = {};
+  item.options.disabled = !enabled;
+  item.disabled = !enabled;
+}
+
+function refreshLoadControls(node) {
+  const source = value(node, "source");
+  const initial = source === "initial_image";
+  ["image", "positive_prompt", "negative_prompt", "seed"].forEach((name) => setWidgetEnabled(widget(node, name), initial));
+  setWidgetEnabled(widget(node, "candidate_id"), source === "candidate");
+  node.setDirtyCanvas?.(true, true);
+}
+
+function refreshMetaControls(node) {
+  const connected = node.inputs?.find((input) => input.name === "iit_meta")?.link != null;
+  ["project_name", "step_idx", "step_name", "storage_root"].forEach((name) => setWidgetEnabled(widget(node, name), !connected));
+  node.setDirtyCanvas?.(true, true);
+}
+
 app.registerExtension({
   name: "iterative-image-toolkit.version-browser",
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== CLASS_NAME) return;
-    const original = nodeType.prototype.onNodeCreated;
-    nodeType.prototype.onNodeCreated = function () {
-      original?.apply(this, arguments);
-      this.addWidget("button", "Open Version Browser", null, () => openBrowser(this));
-      this.size[0] = Math.max(this.size[0], 330);
-    };
+    if (nodeData.name === CLASS_NAME) {
+      const original = nodeType.prototype.onNodeCreated;
+      nodeType.prototype.onNodeCreated = function () {
+        original?.apply(this, arguments);
+        const sourceWidget = widget(this, "source");
+        const originalCallback = sourceWidget?.callback;
+        if (sourceWidget) {
+          sourceWidget.callback = (...args) => {
+            const result = originalCallback?.apply(sourceWidget, args);
+            refreshLoadControls(this);
+            return result;
+          };
+        }
+        this.addWidget("button", "Open Version Browser", null, () => openBrowser(this));
+        this.size[0] = Math.max(this.size[0], 360);
+        refreshLoadControls(this);
+      };
+      const configured = nodeType.prototype.onConfigure;
+      nodeType.prototype.onConfigure = function () {
+        configured?.apply(this, arguments);
+        refreshLoadControls(this);
+      };
+    }
+    if (nodeData.name === "IITSaveCandidates") {
+      const created = nodeType.prototype.onNodeCreated;
+      nodeType.prototype.onNodeCreated = function () {
+        created?.apply(this, arguments);
+        refreshMetaControls(this);
+      };
+      const changed = nodeType.prototype.onConnectionsChange;
+      nodeType.prototype.onConnectionsChange = function () {
+        const result = changed?.apply(this, arguments);
+        refreshMetaControls(this);
+        return result;
+      };
+      const configured = nodeType.prototype.onConfigure;
+      nodeType.prototype.onConfigure = function () {
+        configured?.apply(this, arguments);
+        refreshMetaControls(this);
+      };
+    }
   },
   getNodeMenuItems(node) {
     if (node.comfyClass !== CLASS_NAME) return [];

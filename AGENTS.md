@@ -45,6 +45,15 @@ ComfyUI-Iterative-ImageToolkit is a GPL-3.0 ComfyUI node pack for project/step i
 - Avoid heavyweight ML dependencies unless a documented issue justifies them.
 - Preserve public node names and socket types unless releasing a documented breaking version.
 
+## Node documentation requirements
+
+- Every node class must define a clear user-facing `DESCRIPTION` explaining its purpose, lifecycle role, and important side effects.
+- Every visible required or optional input must define a `tooltip`; do not rely on the input name alone.
+- Every output must have an ordered `OUTPUT_TOOLTIPS` entry aligned exactly with `RETURN_TYPES` and `RETURN_NAMES`.
+- Conditional inputs must state which widget or connection enables them and what happens while inactive.
+- Custom datatypes must document producer, consumer, payload, and precedence. `IIT_META` is produced by IIT Load Version, consumed optionally by IIT Save Candidate Run, contains project/step context, and overrides save-node project widgets when connected.
+- Update descriptions whenever behavior, precedence, defaults, or socket order changes; tests should assert the contract.
+
 ## Storage and security
 
 - Sanitize user-controlled project, step, and image-name path components.
